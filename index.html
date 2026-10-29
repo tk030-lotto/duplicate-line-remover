@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+    <title>重複行削除ツール - Zero Dev</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- ヘッダー -->
+        <header class="app-header">
+            <div class="header-title-row">
+                <h1>重複行削除ツール</h1>
+                <span class="badge-secure">● ローカル完結 (通信なし)</span>
+            </div>
+            <p class="app-desc">テキストを貼り付けて重複行を一括整理。外部通信は行わず、お使いの端末内のみで処理します。</p>
+        </header>
+
+        <!-- コントロールカード -->
+        <section class="controls-card">
+            <div class="action-row">
+                <button id="dedupeBtn" class="btn btn-primary">
+                    <span>重複削除を実行</span>
+                    <span class="shortcut-badge">Ctrl / ⌘ + Enter</span>
+                </button>
+                <button id="extractDupsBtn" class="btn btn-secondary">重複行のみ抽出</button>
+                <button id="undoBtn" class="btn btn-secondary" disabled>元に戻す (Undo)</button>
+                <button id="clearBtn" class="btn btn-ghost">入力をクリア</button>
+            </div>
+
+            <!-- オプションアコーディオン -->
+            <details class="options-details" open>
+                <summary class="options-summary">処理オプション設定</summary>
+                <div class="options-grid">
+                    <label class="option-item">
+                        <input type="checkbox" id="optTrim">
+                        <span>前後の空白をトリムして比較</span>
+                    </label>
+                    <label class="option-item">
+                        <input type="checkbox" id="optIgnoreCase">
+                        <span>大文字・小文字を区別しない</span>
+                    </label>
+                    <div class="option-select-group">
+                        <span class="option-select-label">空行の扱い</span>
+                        <select id="optEmptyLines" class="option-select">
+                            <option value="keep">空行をそのまま残す (初期設定)</option>
+                            <option value="dedupe">空行も1行にまとめる</option>
+                            <option value="remove">空行をすべて削除する</option>
+                        </select>
+                    </div>
+                    <div class="option-select-group">
+                        <span class="option-select-label">出力並び替え</span>
+                        <select id="optSort" class="option-select">
+                            <option value="none">出現順を維持 (初期設定)</option>
+                            <option value="asc">昇順 (A → Z, あ → ん)</option>
+                            <option value="desc">降順 (Z → A, ん → あ)</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <!-- 2ペインエディタエリア -->
+        <main class="panes-wrapper">
+            <!-- 左ペイン: 入力 -->
+            <div class="editor-pane" id="inputPane">
+                <div class="pane-header">
+                    <div class="pane-title-group">
+                        <span class="pane-title">入力テキスト</span>
+                        <span id="inputBadge" class="pane-counter">0 行 / 0 文字</span>
+                    </div>
+                    <div class="pane-actions">
+                        <button id="openFileBtn" class="btn btn-secondary btn-small">ファイルを開く</button>
+                        <input type="file" id="fileInput" accept=".txt,.csv,.tsv,.log,text/*" style="display:none;">
+                    </div>
+                </div>
+                <textarea
+                    id="inputText"
+                    class="textarea-box"
+                    placeholder="ここにテキストを貼り付けるか、ファイルをドラッグ＆ドロップしてください…"
+                    spellcheck="false"
+                    autocomplete="off"
+                ></textarea>
+            </div>
+
+            <!-- 右ペイン: 結果 -->
+            <div class="editor-pane" id="outputPane">
+                <div class="pane-header">
+                    <div class="pane-title-group">
+                        <span class="pane-title">処理結果</span>
+                        <span id="outputBadge" class="pane-counter">0 行 / 0 文字</span>
+                    </div>
+                    <div class="pane-actions">
+                        <button id="applyInputBtn" class="btn btn-secondary btn-small" title="結果を入力エリアに反映してさらに加工">入力へ反映</button>
+                        <button id="downloadBtn" class="btn btn-secondary btn-small" disabled>保存 (.txt)</button>
+                        <button id="copyBtn" class="btn btn-emerald btn-small" disabled>結果をコピー</button>
+                    </div>
+                </div>
+                <textarea
+                    id="outputText"
+                    class="textarea-box"
+                    placeholder="「重複削除を実行」または「重複行のみ抽出」を押すと、ここに結果が表示されます…"
+                    readonly
+                    spellcheck="false"
+                    autocomplete="off"
+                ></textarea>
+            </div>
+        </main>
+
+        <!-- ステータス & 統計情報 -->
+        <section class="stats-card">
+            <div id="statusMessage" class="status-message">テキストを入力して実行ボタンをクリックしてください。</div>
+            <div class="stats-group">
+                <div class="stat-item">
+                    <span>入力行数:</span>
+                    <span id="statInputLines" class="stat-val">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>出力行数:</span>
+                    <span id="statOutputLines" class="stat-val">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>削除行数:</span>
+                    <span id="statRemovedLines" class="stat-val highlight">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>削減率:</span>
+                    <span id="statReductionRate" class="stat-val">0%</span>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- フッター (Zero Dev規約準拠) -->
+    <footer class="app-footer">
+        <div class="footer-content">
+            <p class="footer-disclaimer">※【免責事項】本ソフトウェアは現状有姿で提供されます。重要なデータは事前にバックアップの上ご利用ください。</p>
+            <p class="footer-copyright">
+                © 2026 Zero Dev (tk030) ·
+                <a href="https://github.com/tk030-lotto/duplicate-line-remover/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a> ·
+                <a href="https://zero-dev.jp/" target="_blank" rel="noopener noreferrer">Zero Dev</a>
+            </p>
+        </div>
+    </footer>
+    <script src="core.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
