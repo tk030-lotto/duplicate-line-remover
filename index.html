@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self';">
     <title>重複行削除ツール - Zero Dev</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -73,7 +73,7 @@
                     </div>
                     <div class="pane-actions">
                         <button id="openFileBtn" class="btn btn-secondary btn-small">ファイルを開く</button>
-                        <input type="file" id="fileInput" accept=".txt,.csv,.tsv,.log,text/*" style="display:none;">
+                        <input type="file" id="fileInput" class="file-input-hidden" accept=".txt,.csv,.tsv,.log,text/*">
                     </div>
                 </div>
                 <textarea
@@ -93,7 +93,7 @@
                         <span id="outputBadge" class="pane-counter">0 行 / 0 文字</span>
                     </div>
                     <div class="pane-actions">
-                        <button id="applyInputBtn" class="btn btn-secondary btn-small" title="結果を入力エリアに反映してさらに加工">入力へ反映</button>
+                        <button id="applyInputBtn" class="btn btn-secondary btn-small" title="結果を入力エリアに反映してさらに加工" disabled>入力へ反映</button>
                         <button id="downloadBtn" class="btn btn-secondary btn-small" disabled>保存 (.txt)</button>
                         <button id="copyBtn" class="btn btn-emerald btn-small" disabled>結果をコピー</button>
                     </div>
@@ -133,7 +133,7 @@
         </section>
     </div>
 
-    <!-- フッター (Zero Dev規約準拠) -->
+    <!-- フッター (Zero Dev規約準拠: 「【免責事項】」の表記および強い断定表現不使用の規則を維持すること) -->
     <footer class="app-footer">
         <div class="footer-content">
             <p class="footer-disclaimer">※【免責事項】本ソフトウェアは現状有姿で提供されます。重要なデータは事前にバックアップの上ご利用ください。</p>

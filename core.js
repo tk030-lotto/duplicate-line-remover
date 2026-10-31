@@ -32,6 +32,16 @@
     }
 
     /**
+     * 行が空行（またはトリム有効時に空白のみ）であるかを判定
+     * @param {string} line 
+     * @param {boolean} isTrim 
+     * @returns {boolean}
+     */
+    function isEmptyLine(line, isTrim) {
+        return isTrim ? (line.trim() === '') : (line === '');
+    }
+
+    /**
      * 比較用キーの生成
      * @param {string} line 
      * @param {boolean} isTrim 
@@ -66,9 +76,7 @@
         const result = [];
 
         for (const line of rawLines) {
-            const isEmpty = isTrim ? (line.trim() === '') : (line === '');
-
-            if (isEmpty) {
+            if (isEmptyLine(line, isTrim)) {
                 if (emptyOption === 'keep') {
                     result.push(line);
                 } else if (emptyOption === 'dedupe') {
@@ -107,9 +115,12 @@
         const firstInstances = new Map();
 
         for (const line of rawLines) {
-            const isEmpty = isTrim ? (line.trim() === '') : (line === '');
-            if (isEmpty && emptyOption === 'remove') {
-                continue;
+            if (isEmptyLine(line, isTrim)) {
+                // 'keep'（空行を重複判定しない）および 'remove'（空行削除）では空行を重複抽出対象外とする
+                // 'dedupe'（空行も1行にまとめる）のときのみ、複数空行を重複として1行抽出する
+                if (emptyOption !== 'dedupe') {
+                    continue;
+                }
             }
 
             const key = createCompareKey(line, isTrim, isIgnoreCase);
@@ -133,18 +144,24 @@
      * 行配列のソート
      * @param {string[]} lines 
      * @param {string} sortOption 'none' | 'asc' | 'desc'
+     * @param {Object} [options] 比較オプション（isTrim 等）
      * @returns {string[]} ソート済み配列
      */
-    function sortLines(lines, sortOption) {
+    function sortLines(lines, sortOption, options) {
         if (!sortOption || sortOption === 'none') {
             return [...lines];
         }
+        const opts = options || {};
+        const isTrim = Boolean(opts.isTrim);
         const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
         const copy = [...lines];
+
+        const getSortTarget = (str) => isTrim ? str.trim() : str;
+
         if (sortOption === 'asc') {
-            copy.sort((a, b) => collator.compare(a, b));
+            copy.sort((a, b) => collator.compare(getSortTarget(a), getSortTarget(b)));
         } else if (sortOption === 'desc') {
-            copy.sort((a, b) => collator.compare(b, a));
+            copy.sort((a, b) => collator.compare(getSortTarget(b), getSortTarget(a)));
         }
         return copy;
     }
@@ -153,6 +170,7 @@
     global.DedupeCore = {
         splitLines: splitLines,
         getLineStats: getLineStats,
+        isEmptyLine: isEmptyLine,
         createCompareKey: createCompareKey,
         dedupeLines: dedupeLines,
         extractDuplicateLines: extractDuplicateLines,
