@@ -33,16 +33,15 @@
     const statRemovedLines = $('statRemovedLines');
     const statReductionRate = $('statReductionRate');
 
-    // 実行状態 & Undo履歴スタック（最大20世代・合計1,000万文字上限）
-    let currentMode = null; // 'dedupe' | 'extract' | null
-    let lastExecutedInputLines = null; // 直前実行時の入力行数（統計バー整合性維持用）
-    const undoStack = [];
-    const MAX_UNDO = 20;
-    const MAX_UNDO_CHARS = 10 * 1000 * 1000;
-    let totalUndoChars = 0;
+    const FileIO = window.DedupeFileIO;
+    const History = window.DedupeHistory;
 
-    // バイナリ・非対応ファイル拡張子
-    const UNSUPPORTED_EXTS = /\.(xlsx|xls|docx|doc|pptx|ppt|pdf|zip|rar|7z|tar|gz|png|jpg|jpeg|gif|webp|bmp|ico|mp3|mp4|wav|avi|mov|exe|dll|bin|iso|dmg)$/i;
+    // 実行状態
+    // lastExecutedInput は「実行したときの入力文字列そのもの」。
+    // 行数だけでは、行数が同じ書き換えを検出できないため (F-01)。
+    let currentMode = null; // 'dedupe' | 'extract' | null
+    let lastExecutedInput = null;
+    let lastExecutedLines = null;
 
     function getOptions() {
         return {
@@ -61,60 +60,28 @@
         optSort.value = opts.sortOption || 'none';
     }
 
+    /**
+     * 画面に出ている結果が、いまの入力に対する結果かどうか。
+     * 統計バー・操作ボタン・案内文は、すべてこの1つの判定から導出する (F-01 / F-02)。
+     */
+    function isOutputCurrent() {
+        return currentMode !== null && lastExecutedInput !== null && inputText.value === lastExecutedInput;
+    }
+
     function captureSnapshot() {
         return {
             input: inputText.value,
             output: outputText.value,
             currentMode: currentMode,
-            lastExecutedInputLines: lastExecutedInputLines,
+            lastExecutedInput: lastExecutedInput,
+            lastExecutedLines: lastExecutedLines,
             options: getOptions()
         };
     }
 
     function recordUndoSnapshot(snapshot) {
-        const entryChars = (snapshot.input ? snapshot.input.length : 0) + (snapshot.output ? snapshot.output.length : 0);
-        undoStack.push(snapshot);
-        totalUndoChars += entryChars;
-
-        while (undoStack.length > MAX_UNDO || (undoStack.length > 1 && totalUndoChars > MAX_UNDO_CHARS)) {
-            const removed = undoStack.shift();
-            totalUndoChars -= ((removed.input ? removed.input.length : 0) + (removed.output ? removed.output.length : 0));
-        }
-        undoBtn.disabled = undoStack.length === 0;
-    }
-
-    function syncActionButtons() {
-        const hasOutput = outputText.value.length > 0;
-        copyBtn.disabled = !hasOutput;
-        downloadBtn.disabled = !hasOutput;
-        applyInputBtn.disabled = !hasOutput;
-        undoBtn.disabled = undoStack.length === 0;
-    }
-
-    function resetOutputAndStats() {
-        outputText.value = '';
-        currentMode = null;
-        lastExecutedInputLines = null;
-        updateOutputStats();
-        syncActionButtons();
-    }
-
-    function applyUndo() {
-        if (undoStack.length === 0) return;
-        const state = undoStack.pop();
-        totalUndoChars -= ((state.input ? state.input.length : 0) + (state.output ? state.output.length : 0));
-        if (totalUndoChars < 0) totalUndoChars = 0;
-
-        inputText.value = state.input;
-        outputText.value = state.output;
-        currentMode = state.currentMode || null;
-        lastExecutedInputLines = state.lastExecutedInputLines ?? null;
-        setOptions(state.options);
-
-        updateInputStats();
-        updateOutputStats();
-        syncActionButtons();
-        showStatus('直前の状態に復元しました。', 'info');
+        History.push(snapshot);
+        undoBtn.disabled = !History.canUndo();
     }
 
     function updateInputStats() {
@@ -124,7 +91,6 @@
     }
 
     function updateOutputStats() {
-        const currentInStats = DedupeCore.getLineStats(inputText.value);
         const outStats = DedupeCore.getLineStats(outputText.value);
         outputBadge.textContent = outStats.lines + ' 行 / ' + outStats.chars + ' 文字';
         statOutputLines.textContent = outStats.lines;
@@ -135,25 +101,60 @@
             return;
         }
 
-        if (currentMode === 'extract' || (lastExecutedInputLines !== null && currentInStats.lines !== lastExecutedInputLines)) {
-            // 重複抽出モード、または実行後に入力行数が変化して未実行状態の場合はハイフン表示
+        // 重複抽出モード、または入力がいまの結果と対応していない場合はハイフン表示
+        if (currentMode === 'extract' || !isOutputCurrent() || !lastExecutedLines || lastExecutedLines <= 0) {
             statRemovedLines.textContent = '-';
             statReductionRate.textContent = '-';
-        } else if (lastExecutedInputLines > 0) {
-            const removed = lastExecutedInputLines - outStats.lines;
-            const validRemoved = removed >= 0 ? removed : 0;
-            statRemovedLines.textContent = validRemoved;
-            const rate = Math.round((validRemoved / lastExecutedInputLines) * 100);
-            statReductionRate.textContent = rate + '%';
-        } else {
-            statRemovedLines.textContent = '0';
-            statReductionRate.textContent = '0%';
+            return;
         }
+
+        const removed = lastExecutedLines - outStats.lines;
+        const validRemoved = removed >= 0 ? removed : 0;
+        statRemovedLines.textContent = validRemoved;
+        statReductionRate.textContent = Math.round((validRemoved / lastExecutedLines) * 100) + '%';
+    }
+
+    function syncActionButtons() {
+        const hasOutput = outputText.value.length > 0 && isOutputCurrent();
+        copyBtn.disabled = !hasOutput;
+        downloadBtn.disabled = !hasOutput;
+        applyInputBtn.disabled = !hasOutput;
+        undoBtn.disabled = !History.canUndo();
+    }
+
+    // 描画の入口（状態 → 表示の一方向）(F-04)
+    function render() {
+        updateInputStats();
+        updateOutputStats();
+        syncActionButtons();
     }
 
     function showStatus(msg, type = '') {
         statusMessage.textContent = msg;
         statusMessage.className = 'status-message' + (type ? ' ' + type : '');
+    }
+
+    function resetOutputAndStats() {
+        outputText.value = '';
+        currentMode = null;
+        lastExecutedInput = null;
+        lastExecutedLines = null;
+        render();
+    }
+
+    function applyUndo() {
+        const state = History.pop();
+        if (!state) return;
+
+        inputText.value = state.input;
+        outputText.value = state.output;
+        currentMode = state.currentMode || null;
+        lastExecutedInput = state.lastExecutedInput ?? null;
+        lastExecutedLines = state.lastExecutedLines ?? null;
+        setOptions(state.options);
+
+        render();
+        showStatus('直前の状態に復元しました。', 'info');
     }
 
     // 重複削除・抽出の実行制御
@@ -189,11 +190,10 @@
 
             outputText.value = result;
             currentMode = mode;
-            lastExecutedInputLines = rawLines.length;
+            lastExecutedInput = rawText;
+            lastExecutedLines = rawLines.length;
 
-            updateInputStats();
-            updateOutputStats();
-            syncActionButtons();
+            render();
 
             const inLines = rawLines.length;
             const outLines = processedLines.length;
@@ -218,6 +218,25 @@
         }
     }
 
+    // ファイル読み込み（ボタン経由・ドラッグ＆ドロップ共通）
+    function loadFile(file) {
+        FileIO.readTextFile(file, {
+            onLoaded: function (text, meta) {
+                recordUndoSnapshot(captureSnapshot());
+                inputText.value = text;
+                resetOutputAndStats();
+                if (meta.isLarge) {
+                    showStatus('大容量ファイル「' + meta.name + '」(' + meta.sizeMB + 'MB / ' + meta.encoding + ') を読み込みました。処理に時間がかかる場合があります。', 'info');
+                } else {
+                    showStatus('ファイル「' + meta.name + '」を読み込みました。', 'success');
+                }
+            },
+            onError: function (message) {
+                showStatus(message, 'error');
+            }
+        });
+    }
+
     // イベントハンドラー設定
     dedupeBtn.addEventListener('click', () => processText('dedupe'));
     extractDupsBtn.addEventListener('click', () => processText('extract'));
@@ -228,17 +247,15 @@
         recordUndoSnapshot(captureSnapshot());
         inputText.value = '';
         resetOutputAndStats();
-        updateInputStats();
         showStatus('入力をクリアしました。', 'info');
         inputText.focus();
     });
 
     applyInputBtn.addEventListener('click', function() {
-        if (!outputText.value) return;
+        if (!outputText.value || !isOutputCurrent()) return;
         recordUndoSnapshot(captureSnapshot());
         inputText.value = outputText.value;
         resetOutputAndStats();
-        updateInputStats();
         showStatus('結果を入力エリアに反映しました。', 'info');
     });
 
@@ -254,7 +271,7 @@
     // コピー機能（クリップボードAPI + フォールバック）
     copyBtn.addEventListener('click', async function() {
         const text = outputText.value;
-        if (!text) return;
+        if (!text || !isOutputCurrent()) return;
 
         try {
             await navigator.clipboard.writeText(text);
@@ -271,10 +288,10 @@
         }
     });
 
-    // ファイルダウンロード
+    // ファイルダウンロード（UTF-8 / BOMなし / LF のまま保存）
     downloadBtn.addEventListener('click', function() {
         const text = outputText.value;
-        if (!text) return;
+        if (!text || !isOutputCurrent()) return;
 
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -293,69 +310,9 @@
     fileInput.addEventListener('change', function(e) {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        readFile(file);
+        loadFile(file);
         fileInput.value = '';
     });
-
-    function decodeBufferToText(buffer) {
-        const bytes = new Uint8Array(buffer);
-        // NULバイト検査（バイナリファイル遮断）
-        const checkLen = Math.min(bytes.length, 8192);
-        for (let i = 0; i < checkLen; i++) {
-            if (bytes[i] === 0) {
-                throw new Error('BINARY_FILE');
-            }
-        }
-        try {
-            const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
-            return { text: utf8Decoder.decode(bytes), encoding: 'UTF-8' };
-        } catch (e) {
-            const sjisDecoder = new TextDecoder('shift-jis');
-            return { text: sjisDecoder.decode(bytes), encoding: 'Shift-JIS' };
-        }
-    }
-
-    function readFile(file) {
-        const MAX_LIMIT_SIZE = 20 * 1024 * 1024; // 20MB 上限
-        const WARN_SIZE = 5 * 1024 * 1024;      // 5MB 警告
-        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-
-        if (UNSUPPORTED_EXTS.test(file.name || '')) {
-            showStatus('非対応のファイル形式です。テキスト形式（.txt, .csv, .tsv, .log 等）のファイルを指定してください。', 'error');
-            return;
-        }
-
-        if (file.size > MAX_LIMIT_SIZE) {
-            showStatus('ファイルサイズが上限を超えています (' + sizeMB + 'MB)。ブラウザ保護のため、20MB以下のファイルを指定してください。', 'error');
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-            try {
-                const decoded = decodeBufferToText(evt.target.result);
-                recordUndoSnapshot(captureSnapshot());
-                inputText.value = decoded.text || '';
-                resetOutputAndStats();
-                updateInputStats();
-                if (file.size > WARN_SIZE) {
-                    showStatus('大容量ファイル「' + file.name + '」(' + sizeMB + 'MB / ' + decoded.encoding + ') を読み込みました。処理に時間がかかる場合があります。', 'info');
-                } else {
-                    showStatus('ファイル「' + file.name + '」を読み込みました。', 'success');
-                }
-            } catch (err) {
-                if (err && err.message === 'BINARY_FILE') {
-                    showStatus('バイナリファイルは読み込めません。テキスト形式のファイルを指定してください。', 'error');
-                } else {
-                    showStatus('ファイルの読み込みに失敗しました。', 'error');
-                }
-            }
-        };
-        reader.onerror = function() {
-            showStatus('ファイルの読み込みに失敗しました。', 'error');
-        };
-        reader.readAsArrayBuffer(file);
-    }
 
     // ドラッグ＆ドロップ対応
     ['dragenter', 'dragover'].forEach(name => {
@@ -378,15 +335,18 @@
         const dt = e.dataTransfer;
         const files = dt && dt.files;
         if (files && files.length > 0) {
-            readFile(files[0]);
+            loadFile(files[0]);
         }
     });
 
-    // テキスト入力の監視（カウント同期と統計バー整合性維持）
+    // テキスト入力の監視（結果が古くなったことを伝える）
     inputText.addEventListener('input', function() {
-        updateInputStats();
-        updateOutputStats();
-        showStatus('', '');
+        render();
+        if (outputText.value.length > 0 && !isOutputCurrent()) {
+            showStatus('入力が変更されました。表示中の結果は前回実行時のものです。もう一度実行してください。', 'info');
+        } else {
+            showStatus('', '');
+        }
     });
 
     // キーボードショートカット (Ctrl + Enter / Cmd + Enter, Ctrl + Z)
@@ -397,7 +357,7 @@
         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
             const active = document.activeElement;
             const isEditorFocused = (active === inputText && inputText.value !== '') || active === outputText;
-            if (!isEditorFocused && undoStack.length > 0) {
+            if (!isEditorFocused && History.canUndo()) {
                 e.preventDefault();
                 applyUndo();
             }
@@ -405,8 +365,6 @@
     });
 
     // 初期化
-    updateInputStats();
-    updateOutputStats();
-    syncActionButtons();
+    render();
     inputText.focus();
 })();
